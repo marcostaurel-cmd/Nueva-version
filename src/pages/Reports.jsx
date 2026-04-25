@@ -1,212 +1,254 @@
-import { useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend, LineChart, Line,
+  PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import { useApp } from '../context/AppContext';
-import { formatCurrency, PROJECT_STATUSES } from '../utils/format';
+import { DOC_STATUSES, TYPE_DOT_COLORS, STATUS_CHART_COLORS } from '../utils/format';
+import { formatDate } from '../utils/format';
+import { FileText, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 
-const COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316', '#84cc16'];
-
-function getMonthlyData(transactions, year) {
-  const months = Array.from({ length: 12 }, (_, i) => ({
-    name: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i],
-    income: 0,
-    expense: 0,
-  }));
-  transactions.forEach(t => {
-    const d = new Date(t.date || t.createdAt);
-    if (d.getFullYear() !== year) return;
-    const m = d.getMonth();
-    if (t.type === 'income') months[m].income += t.amount;
-    else months[m].expense += t.amount;
+function getMonthlyCreated(documents) {
+  const months = {};
+  documents.forEach(d => {
+    const dt = new Date(d.createdAt);
+    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    months[key] = (months[key] || 0) + 1;
   });
-  return months.map(m => ({ ...m, balance: m.income - m.expense }));
-}
-
-function getCategoryData(transactions, categories, type) {
-  return categories
-    .filter(c => c.type === type)
-    .map(c => ({
-      name: c.name,
-      value: transactions.filter(t => t.categoryId === c.id && t.type === type).reduce((s, t) => s + t.amount, 0),
-    }))
-    .filter(d => d.value > 0)
-    .sort((a, b) => b.value - a.value);
-}
-
-function getProjectData(projects, transactions) {
-  return projects.map(p => {
-    const income = transactions.filter(t => t.projectId === p.id && t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const expense = transactions.filter(t => t.projectId === p.id && t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    return { name: p.name, income, expense, balance: income - expense };
-  }).sort((a, b) => b.income - a.income);
+  const labels = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return Object.entries(months)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12)
+    .map(([key, count]) => {
+      const [year, month] = key.split('-');
+      return { name: `${labels[parseInt(month) - 1]} ${year.slice(2)}`, count };
+    });
 }
 
 export default function Reports() {
   const { state } = useApp();
-  const currentYear = new Date().getFullYear();
-  const [year, setYear] = useState(currentYear);
 
-  const years = Array.from(new Set([
-    currentYear - 1, currentYear,
-    ...state.transactions.map(t => new Date(t.date || t.createdAt).getFullYear()),
-  ])).sort((a, b) => b - a);
+  const statusData = Object.entries(DOC_STATUSES).map(([key, val]) => ({
+    name: val.label,
+    value: state.documents.filter(d => d.status === key).length,
+    color: STATUS_CHART_COLORS[key],
+  }));
 
-  const monthly = getMonthlyData(state.transactions, year);
-  const incomeCats = getCategoryData(state.transactions, state.categories, 'income');
-  const expenseCats = getCategoryData(state.transactions, state.categories, 'expense');
-  const projectData = getProjectData(state.projects, state.transactions);
+  const typeData = state.documentTypes.map(t => {
+    const docs = state.documents.filter(d => d.typeId === t.id);
+    return {
+      name: t.name,
+      total: docs.length,
+      aprobados: docs.filter(d => d.status === 'approved').length,
+      revision: docs.filter(d => d.status === 'review').length,
+      borrador: docs.filter(d => d.status === 'draft').length,
+      obsoleto: docs.filter(d => d.status === 'obsolete').length,
+      color: TYPE_DOT_COLORS[t.color] || '#3b82f6',
+    };
+  }).filter(d => d.total > 0);
 
-  const totalIncome = state.transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-  const totalExpense = state.transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const monthlyData = getMonthlyCreated(state.documents);
+
+  const totalDocs = state.documents.length;
+  const approved = state.documents.filter(d => d.status === 'approved').length;
+  const review = state.documents.filter(d => d.status === 'review').length;
+
+  // Documents with nextReviewDate in next 30 days
+  const now = new Date();
+  const in30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const dueForReview = state.documents.filter(d => {
+    if (!d.nextReviewDate) return false;
+    const rd = new Date(d.nextReviewDate);
+    return rd >= now && rd <= in30;
+  });
+
+  const overdue = state.documents.filter(d => {
+    if (!d.nextReviewDate) return false;
+    return new Date(d.nextReviewDate) < now && d.status !== 'obsolete';
+  });
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Reportes</h1>
-          <p className="text-gray-500 text-sm">Análisis financiero detallado</p>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Reportes</h1>
+        <p className="text-gray-500 text-sm">Análisis y estadísticas del sistema documental</p>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="card flex items-center gap-3 p-4">
+          <div className="p-2.5 rounded-xl bg-blue-50">
+            <FileText size={20} className="text-blue-600" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Total</p>
+            <p className="text-xl font-bold text-gray-900">{totalDocs}</p>
+          </div>
         </div>
-        <select className="select w-auto" value={year} onChange={e => setYear(Number(e.target.value))}>
-          {years.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
+        <div className="card flex items-center gap-3 p-4">
+          <div className="p-2.5 rounded-xl bg-green-50">
+            <CheckCircle size={20} className="text-green-600" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Aprobados</p>
+            <p className="text-xl font-bold text-gray-900">{approved}</p>
+            <p className="text-xs text-gray-400">{totalDocs > 0 ? `${Math.round((approved / totalDocs) * 100)}%` : '0%'}</p>
+          </div>
+        </div>
+        <div className="card flex items-center gap-3 p-4">
+          <div className="p-2.5 rounded-xl bg-yellow-50">
+            <Clock size={20} className="text-yellow-600" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">En revisión</p>
+            <p className="text-xl font-bold text-gray-900">{review}</p>
+          </div>
+        </div>
+        <div className="card flex items-center gap-3 p-4">
+          <div className="p-2.5 rounded-xl bg-red-50">
+            <AlertTriangle size={20} className="text-red-500" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Vencidos</p>
+            <p className="text-xl font-bold text-gray-900">{overdue.length}</p>
+          </div>
+        </div>
       </div>
 
-      {/* Monthly bar chart */}
-      <div className="card">
-        <h2 className="font-semibold text-gray-900 mb-4">Ingresos y Egresos mensuales — {year}</h2>
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={monthly} barGap={4}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
-            <Tooltip formatter={v => formatCurrency(v)} />
-            <Bar dataKey="income" name="Ingresos" fill="#22c55e" radius={[4,4,0,0]} />
-            <Bar dataKey="expense" name="Egresos" fill="#ef4444" radius={[4,4,0,0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Balance line chart */}
-      <div className="card">
-        <h2 className="font-semibold text-gray-900 mb-4">Balance mensual — {year}</h2>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={monthly}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
-            <Tooltip formatter={v => formatCurrency(v)} />
-            <Line type="monotone" dataKey="balance" name="Balance" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Category pies */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="card">
-          <h2 className="font-semibold text-gray-900 mb-2">Ingresos por categoría</h2>
-          <p className="text-sm text-gray-500 mb-4">Total: {formatCurrency(totalIncome)}</p>
-          {incomeCats.length === 0 ? (
-            <p className="text-center text-gray-400 text-sm py-8">Sin datos</p>
+      {/* Charts row 1 */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div className="card xl:col-span-2">
+          <h2 className="font-semibold text-gray-900 mb-4">Documentos por tipo y estado</h2>
+          {typeData.length === 0 ? (
+            <div className="h-48 flex items-center justify-center text-gray-400 text-sm">Sin datos</div>
           ) : (
-            <>
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={incomeCats} cx="50%" cy="50%" outerRadius={80} dataKey="value">
-                    {incomeCats.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={v => formatCurrency(v)} />
-                  <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-2 mt-2">
-                {incomeCats.map((d, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                      <span className="text-gray-700">{d.name}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-medium text-green-600">{formatCurrency(d.value)}</span>
-                      <span className="text-xs text-gray-400">{totalIncome > 0 ? ((d.value / totalIncome) * 100).toFixed(1) : 0}%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="card">
-          <h2 className="font-semibold text-gray-900 mb-2">Egresos por categoría</h2>
-          <p className="text-sm text-gray-500 mb-4">Total: {formatCurrency(totalExpense)}</p>
-          {expenseCats.length === 0 ? (
-            <p className="text-center text-gray-400 text-sm py-8">Sin datos</p>
-          ) : (
-            <>
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={expenseCats} cx="50%" cy="50%" outerRadius={80} dataKey="value">
-                    {expenseCats.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={v => formatCurrency(v)} />
-                  <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-2 mt-2">
-                {expenseCats.map((d, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                      <span className="text-gray-700">{d.name}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-medium text-red-500">{formatCurrency(d.value)}</span>
-                      <span className="text-xs text-gray-400">{totalExpense > 0 ? ((d.value / totalExpense) * 100).toFixed(1) : 0}%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Per project */}
-      <div className="card">
-        <h2 className="font-semibold text-gray-900 mb-4">Resumen por proyecto</h2>
-        {projectData.length === 0 ? (
-          <p className="text-center text-gray-400 text-sm py-6">Sin proyectos registrados</p>
-        ) : (
-          <>
-            <ResponsiveContainer width="100%" height={Math.max(200, projectData.length * 50)}>
-              <BarChart data={projectData} layout="vertical" barGap={4}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={120} />
-                <Tooltip formatter={v => formatCurrency(v)} />
-                <Bar dataKey="income" name="Ingresos" fill="#22c55e" radius={[0,4,4,0]} />
-                <Bar dataKey="expense" name="Egresos" fill="#ef4444" radius={[0,4,4,0]} />
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={typeData} barGap={2}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="aprobados" name="Aprobado" fill={STATUS_CHART_COLORS.approved} stackId="s" radius={[0,0,0,0]} />
+                <Bar dataKey="revision" name="En Revisión" fill={STATUS_CHART_COLORS.review} stackId="s" />
+                <Bar dataKey="borrador" name="Borrador" fill={STATUS_CHART_COLORS.draft} stackId="s" />
+                <Bar dataKey="obsoleto" name="Obsoleto" fill={STATUS_CHART_COLORS.obsolete} stackId="s" radius={[4,4,0,0]} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
               </BarChart>
             </ResponsiveContainer>
-            <div className="mt-4 space-y-2">
-              {projectData.map((p, i) => {
-                const st = PROJECT_STATUSES[state.projects.find(pr => pr.name === p.name)?.status] || PROJECT_STATUSES.active;
-                return (
-                  <div key={i} className="flex items-center justify-between py-2 border-t border-gray-50 text-sm">
-                    <span className="font-medium text-gray-800">{p.name}</span>
-                    <div className="flex gap-6">
-                      <span className="text-green-600">{formatCurrency(p.income)}</span>
-                      <span className="text-red-500">{formatCurrency(p.expense)}</span>
-                      <span className={`font-semibold ${p.balance >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>{formatCurrency(p.balance)}</span>
+          )}
+        </div>
+
+        <div className="card">
+          <h2 className="font-semibold text-gray-900 mb-4">Distribución por estado</h2>
+          {statusData.every(d => d.value === 0) ? (
+            <div className="h-48 flex items-center justify-center text-gray-400 text-sm">Sin datos</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart>
+                  <Pie data={statusData.filter(d => d.value > 0)} cx="50%" cy="50%" outerRadius={72} dataKey="value">
+                    {statusData.filter(d => d.value > 0).map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="space-y-2 mt-3">
+                {statusData.map((d, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full" style={{ background: d.color }} />
+                      <span className="text-gray-600">{d.name}</span>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-800">{d.value}</span>
+                      <span className="text-xs text-gray-400">
+                        {totalDocs > 0 ? `${Math.round((d.value / totalDocs) * 100)}%` : '0%'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Monthly creation chart */}
+      <div className="card">
+        <h2 className="font-semibold text-gray-900 mb-4">Documentos creados por mes</h2>
+        {monthlyData.length === 0 ? (
+          <div className="h-40 flex items-center justify-center text-gray-400 text-sm">Sin datos</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={monthlyData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="count" name="Documentos" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Review alerts */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="card">
+          <h2 className="font-semibold text-gray-900 mb-3">
+            <span className="inline-flex items-center gap-2">
+              <Clock size={16} className="text-yellow-500" />
+              Próximos a revisar (30 días)
+            </span>
+          </h2>
+          {dueForReview.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-4">Sin revisiones próximas</p>
+          ) : (
+            <div className="space-y-2">
+              {dueForReview.map(doc => {
+                const daysLeft = Math.ceil((new Date(doc.nextReviewDate) - now) / (1000 * 60 * 60 * 24));
+                return (
+                  <div key={doc.id} className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg">
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{doc.code ? `${doc.code} — ` : ''}{doc.title}</p>
+                      <p className="text-xs text-gray-500">Revisión: {formatDate(doc.nextReviewDate)}</p>
+                    </div>
+                    <span className="text-xs font-semibold text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded-full">
+                      {daysLeft}d
+                    </span>
                   </div>
                 );
               })}
             </div>
-          </>
-        )}
+          )}
+        </div>
+
+        <div className="card">
+          <h2 className="font-semibold text-gray-900 mb-3">
+            <span className="inline-flex items-center gap-2">
+              <AlertTriangle size={16} className="text-red-500" />
+              Revisiones vencidas
+            </span>
+          </h2>
+          {overdue.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-4">Sin revisiones vencidas</p>
+          ) : (
+            <div className="space-y-2">
+              {overdue.map(doc => {
+                const daysOver = Math.ceil((now - new Date(doc.nextReviewDate)) / (1000 * 60 * 60 * 24));
+                return (
+                  <div key={doc.id} className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{doc.code ? `${doc.code} — ` : ''}{doc.title}</p>
+                      <p className="text-xs text-gray-500">Venció: {formatDate(doc.nextReviewDate)}</p>
+                    </div>
+                    <span className="text-xs font-semibold text-red-600 bg-red-100 px-2 py-0.5 rounded-full">
+                      +{daysOver}d
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

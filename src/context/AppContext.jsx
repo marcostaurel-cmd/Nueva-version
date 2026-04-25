@@ -3,22 +3,18 @@ import { v4 as uuidv4 } from 'uuid';
 
 const AppContext = createContext(null);
 
-const STORAGE_KEY = 'project-tracker-data';
+const STORAGE_KEY = 'doc-control-data';
 
 const initialState = {
-  projects: [],
-  transactions: [],
-  categories: [
-    { id: 'cat-1', name: 'Ventas', type: 'income' },
-    { id: 'cat-2', name: 'Servicios', type: 'income' },
-    { id: 'cat-3', name: 'Inversión', type: 'income' },
-    { id: 'cat-4', name: 'Otros ingresos', type: 'income' },
-    { id: 'cat-5', name: 'Materiales', type: 'expense' },
-    { id: 'cat-6', name: 'Personal', type: 'expense' },
-    { id: 'cat-7', name: 'Marketing', type: 'expense' },
-    { id: 'cat-8', name: 'Infraestructura', type: 'expense' },
-    { id: 'cat-9', name: 'Administrativo', type: 'expense' },
-    { id: 'cat-10', name: 'Otros egresos', type: 'expense' },
+  documents: [],
+  revisions: [],
+  documentTypes: [
+    { id: 'type-1', name: 'Procedimiento', prefix: 'PRO', color: 'blue' },
+    { id: 'type-2', name: 'Instructivo', prefix: 'INS', color: 'green' },
+    { id: 'type-3', name: 'Política', prefix: 'POL', color: 'purple' },
+    { id: 'type-4', name: 'Formulario', prefix: 'FOR', color: 'yellow' },
+    { id: 'type-5', name: 'Registro', prefix: 'REG', color: 'orange' },
+    { id: 'type-6', name: 'Manual', prefix: 'MAN', color: 'red' },
   ],
 };
 
@@ -35,45 +31,67 @@ function loadState() {
 
 function reducer(state, action) {
   switch (action.type) {
-    // Projects
-    case 'ADD_PROJECT': {
-      const project = { id: uuidv4(), createdAt: new Date().toISOString(), status: 'active', ...action.payload };
-      return { ...state, projects: [...state.projects, project] };
+    // Documents
+    case 'ADD_DOCUMENT': {
+      const doc = {
+        id: uuidv4(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: 'draft',
+        ...action.payload,
+      };
+      return { ...state, documents: [...state.documents, doc] };
     }
-    case 'UPDATE_PROJECT': {
+    case 'UPDATE_DOCUMENT': {
       return {
         ...state,
-        projects: state.projects.map(p => p.id === action.payload.id ? { ...p, ...action.payload } : p),
+        documents: state.documents.map(d =>
+          d.id === action.payload.id
+            ? { ...d, ...action.payload, updatedAt: new Date().toISOString() }
+            : d
+        ),
       };
     }
-    case 'DELETE_PROJECT': {
+    case 'DELETE_DOCUMENT': {
       return {
         ...state,
-        projects: state.projects.filter(p => p.id !== action.payload),
-        transactions: state.transactions.filter(t => t.projectId !== action.payload),
+        documents: state.documents.filter(d => d.id !== action.payload),
+        revisions: state.revisions.filter(r => r.documentId !== action.payload),
       };
     }
-    // Transactions
-    case 'ADD_TRANSACTION': {
-      const tx = { id: uuidv4(), createdAt: new Date().toISOString(), ...action.payload };
-      return { ...state, transactions: [...state.transactions, tx] };
+    // Revisions
+    case 'ADD_REVISION': {
+      const rev = {
+        id: uuidv4(),
+        createdAt: new Date().toISOString(),
+        ...action.payload,
+      };
+      // Also update document version and status
+      const updatedDocs = state.documents.map(d =>
+        d.id === rev.documentId
+          ? { ...d, version: rev.version, status: rev.status, updatedAt: new Date().toISOString() }
+          : d
+      );
+      return { ...state, revisions: [...state.revisions, rev], documents: updatedDocs };
     }
-    case 'UPDATE_TRANSACTION': {
+    case 'DELETE_REVISION': {
+      return { ...state, revisions: state.revisions.filter(r => r.id !== action.payload) };
+    }
+    // Document Types
+    case 'ADD_DOCUMENT_TYPE': {
+      const dt = { id: uuidv4(), ...action.payload };
+      return { ...state, documentTypes: [...state.documentTypes, dt] };
+    }
+    case 'UPDATE_DOCUMENT_TYPE': {
       return {
         ...state,
-        transactions: state.transactions.map(t => t.id === action.payload.id ? { ...t, ...action.payload } : t),
+        documentTypes: state.documentTypes.map(t =>
+          t.id === action.payload.id ? { ...t, ...action.payload } : t
+        ),
       };
     }
-    case 'DELETE_TRANSACTION': {
-      return { ...state, transactions: state.transactions.filter(t => t.id !== action.payload) };
-    }
-    // Categories
-    case 'ADD_CATEGORY': {
-      const cat = { id: uuidv4(), ...action.payload };
-      return { ...state, categories: [...state.categories, cat] };
-    }
-    case 'DELETE_CATEGORY': {
-      return { ...state, categories: state.categories.filter(c => c.id !== action.payload) };
+    case 'DELETE_DOCUMENT_TYPE': {
+      return { ...state, documentTypes: state.documentTypes.filter(t => t.id !== action.payload) };
     }
     default:
       return state;
@@ -97,23 +115,12 @@ export function useApp() {
 }
 
 // Derived selectors
-export function useProjectStats(projectId) {
+export function useDocumentStats() {
   const { state } = useApp();
-  const txs = state.transactions.filter(t => t.projectId === projectId);
-  const income = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-  const expense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  return { income, expense, balance: income - expense, count: txs.length };
-}
-
-export function useGlobalStats() {
-  const { state } = useApp();
-  const income = state.transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-  const expense = state.transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  return {
-    income,
-    expense,
-    balance: income - expense,
-    totalProjects: state.projects.length,
-    activeProjects: state.projects.filter(p => p.status === 'active').length,
-  };
+  const total = state.documents.length;
+  const approved = state.documents.filter(d => d.status === 'approved').length;
+  const review = state.documents.filter(d => d.status === 'review').length;
+  const draft = state.documents.filter(d => d.status === 'draft').length;
+  const obsolete = state.documents.filter(d => d.status === 'obsolete').length;
+  return { total, approved, review, draft, obsolete };
 }

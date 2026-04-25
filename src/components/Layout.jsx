@@ -1,19 +1,18 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard,
-  FolderKanban,
-  ArrowLeftRight,
+  FileText,
+  GitBranch,
   BarChart3,
-  Tag,
-  ChevronRight,
+  Layers,
 } from 'lucide-react';
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/projects', label: 'Proyectos', icon: FolderKanban },
-  { to: '/transactions', label: 'Movimientos', icon: ArrowLeftRight },
-  { to: '/reports', label: 'Reportes', icon: BarChart3 },
-  { to: '/categories', label: 'Categorías', icon: Tag },
+  { to: '/',         label: 'Dashboard',   icon: LayoutDashboard },
+  { to: '/documents', label: 'Documentos',  icon: FileText },
+  { to: '/revisions', label: 'Revisiones',  icon: GitBranch },
+  { to: '/reports',   label: 'Reportes',    icon: BarChart3 },
+  { to: '/types',     label: 'Tipos',       icon: Layers },
 ];
 
 export default function Layout() {
@@ -24,11 +23,11 @@ export default function Layout() {
         <div className="px-6 py-5 border-b border-gray-700">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-              <FolderKanban size={16} />
+              <FileText size={16} />
             </div>
             <div>
               <p className="font-semibold text-sm leading-tight">Control de</p>
-              <p className="font-semibold text-sm leading-tight text-blue-400">Proyectos</p>
+              <p className="font-semibold text-sm leading-tight text-blue-400">Documentos</p>
             </div>
           </div>
         </div>

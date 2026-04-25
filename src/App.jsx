@@ -2,10 +2,10 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AppProvider } from './context/AppContext';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import Projects from './pages/Projects';
-import Transactions from './pages/Transactions';
+import Documents from './pages/Documents';
+import Revisions from './pages/Revisions';
 import Reports from './pages/Reports';
-import Categories from './pages/Categories';
+import DocumentTypes from './pages/DocumentTypes';
 
 export default function App() {
   return (
@@ -14,10 +14,10 @@ export default function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Dashboard />} />
-            <Route path="projects" element={<Projects />} />
-            <Route path="transactions" element={<Transactions />} />
+            <Route path="documents" element={<Documents />} />
+            <Route path="revisions" element={<Revisions />} />
             <Route path="reports" element={<Reports />} />
-            <Route path="categories" element={<Categories />} />
+            <Route path="types" element={<DocumentTypes />} />
           </Route>
         </Routes>
       </BrowserRouter>
