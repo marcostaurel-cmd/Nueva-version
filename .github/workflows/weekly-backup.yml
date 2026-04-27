@@ -1,0 +1,212 @@
+name: Respaldo Semanal
+
+# Miércoles 8 PM PST = Jueves 04:00 UTC (PST = UTC-8)
+on:
+  schedule:
+    - cron: '0 4 * * 4'
+  workflow_dispatch:
+    inputs:
+      keep_last:
+        description: 'Número de respaldos a conservar'
+        required: false
+        default: '5'
+
+env:
+  TZ: America/Los_Angeles
+  NODE_VERSION: '20'
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  etapa-1-verificacion:
+    name: 'Etapa 1 — Verificación del entorno'
+    runs-on: ubuntu-latest
+    outputs:
+      timestamp: ${{ steps.meta.outputs.timestamp }}
+      git_sha: ${{ steps.meta.outputs.git_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Verificar entorno
+        id: meta
+        run: |
+          echo "timestamp=$(TZ='America/Los_Angeles' date '+%Y%m%d_%H%M%S')" >> "$GITHUB_OUTPUT"
+          echo "git_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Node $(node -v) | npm $(npm -v)"
+          [[ -f package.json ]] || (echo "ERROR: package.json no encontrado" && exit 1)
+          echo "Entorno verificado ✔"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  etapa-2-build:
+    name: 'Etapa 2 — Construcción de producción'
+    runs-on: ubuntu-latest
+    needs: etapa-1-verificacion
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Build de producción
+        run: npm run build
+
+      - name: Verificar artefactos de build
+        run: |
+          [[ -d dist ]] || (echo "ERROR: dist/ no generado" && exit 1)
+          echo "Archivos generados en dist/:"
+          find dist -type f | sort
+          echo "Build verificado ✔"
+
+      - name: Subir artefacto dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ needs.etapa-1-verificacion.outputs.timestamp }}
+          path: dist/
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  etapa-3-empaquetado:
+    name: 'Etapa 3 — Empaquetado del respaldo'
+    runs-on: ubuntu-latest
+    needs:
+      - etapa-1-verificacion
+      - etapa-2-build
+    outputs:
+      backup_name: ${{ steps.pack.outputs.backup_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Descargar artefacto dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.etapa-1-verificacion.outputs.timestamp }}
+          path: dist/
+
+      - name: Empaquetar respaldo
+        id: pack
+        run: |
+          TS="${{ needs.etapa-1-verificacion.outputs.timestamp }}"
+          SHA="${{ needs.etapa-1-verificacion.outputs.git_sha }}"
+          BACKUP_NAME="nueva-version_${TS}_${SHA}"
+          echo "backup_name=${BACKUP_NAME}" >> "$GITHUB_OUTPUT"
+
+          mkdir -p "backup/${BACKUP_NAME}"
+
+          # Copiar build
+          cp -r dist "backup/${BACKUP_NAME}/dist"
+
+          # Comprimir código fuente
+          tar -czf "backup/${BACKUP_NAME}/src.tar.gz" \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./dist' \
+            --exclude='./backup' \
+            .
+          echo "src.tar.gz generado ✔"
+
+          # Metadata
+          cat > "backup/${BACKUP_NAME}/metadata.json" <<EOF
+          {
+            "timestamp": "${TS}",
+            "fecha_pst": "$(TZ='America/Los_Angeles' date '+%Y-%m-%d %H:%M:%S %Z')",
+            "fecha_utc": "$(date -u '+%Y-%m-%d %H:%M:%S UTC')",
+            "proyecto": "Nueva-version",
+            "git_commit": "${SHA}",
+            "git_branch": "${{ github.ref_name }}",
+            "workflow_run": "${{ github.run_id }}"
+          }
+          EOF
+
+          # Archivo final
+          tar -czf "${BACKUP_NAME}.tar.gz" -C backup "${BACKUP_NAME}"
+          echo "Archivo empaquetado: ${BACKUP_NAME}.tar.gz ✔"
+
+      - name: Subir respaldo empaquetado
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.backup_name }}
+          path: ${{ steps.pack.outputs.backup_name }}.tar.gz
+          retention-days: 90
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  etapa-4-verificacion-integridad:
+    name: 'Etapa 4 — Verificación de integridad'
+    runs-on: ubuntu-latest
+    needs:
+      - etapa-1-verificacion
+      - etapa-3-empaquetado
+    steps:
+      - name: Descargar respaldo
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.etapa-3-empaquetado.outputs.backup_name }}
+
+      - name: Verificar integridad del archivo
+        run: |
+          ARCHIVO="${{ needs.etapa-3-empaquetado.outputs.backup_name }}.tar.gz"
+          tar -tzf "$ARCHIVO" > /dev/null && echo "Archivo íntegro ✔"
+
+          # SHA-256
+          sha256sum "$ARCHIVO" | tee "${ARCHIVO}.sha256"
+          echo "SHA-256 generado ✔"
+
+      - name: Verificar contenido del respaldo
+        run: |
+          ARCHIVO="${{ needs.etapa-3-empaquetado.outputs.backup_name }}.tar.gz"
+          echo "Contenido del respaldo:"
+          tar -tzf "$ARCHIVO" | sort
+          tar -tzf "$ARCHIVO" | grep -q "metadata.json" || (echo "ERROR: metadata.json ausente" && exit 1)
+          tar -tzf "$ARCHIVO" | grep -q "src.tar.gz"    || (echo "ERROR: src.tar.gz ausente"    && exit 1)
+          tar -tzf "$ARQUIVO" | grep -q "dist/"         || true
+          echo "Contenido verificado ✔"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  etapa-5-reporte:
+    name: 'Etapa 5 — Reporte final'
+    runs-on: ubuntu-latest
+    needs:
+      - etapa-1-verificacion
+      - etapa-2-build
+      - etapa-3-empaquetado
+      - etapa-4-verificacion-integridad
+    if: always()
+    steps:
+      - name: Generar reporte
+        run: |
+          echo "╔══════════════════════════════════════════════════╗"
+          echo "║        RESPALDO SEMANAL — RESUMEN                ║"
+          echo "╚══════════════════════════════════════════════════╝"
+          echo ""
+          echo "  Proyecto : Nueva-version"
+          echo "  Timestamp: ${{ needs.etapa-1-verificacion.outputs.timestamp }}"
+          echo "  Commit   : ${{ needs.etapa-1-verificacion.outputs.git_sha }}"
+          echo "  Hora PST : $(TZ='America/Los_Angeles' date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "  Run ID   : ${{ github.run_id }}"
+          echo ""
+          echo "  Etapa 1 — Verificación : ${{ needs.etapa-1-verificacion.result }}"
+          echo "  Etapa 2 — Build        : ${{ needs.etapa-2-build.result }}"
+          echo "  Etapa 3 — Empaquetado  : ${{ needs.etapa-3-empaquetado.result }}"
+          echo "  Etapa 4 — Integridad   : ${{ needs.etapa-4-verificacion-integridad.result }}"
+          echo ""
+
+      - name: Verificar resultado global
+        run: |
+          if [[ "${{ needs.etapa-4-verificacion-integridad.result }}" != "success" ]]; then
+            echo "Una o más etapas fallaron — revisar logs del workflow"
+            exit 1
+          fi
+          echo "Todas las etapas completadas exitosamente ✔"
