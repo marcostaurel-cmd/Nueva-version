@@ -1,0 +1,18 @@
+{
+  "appId": "com.nuevaversion.app",
+  "productName": "Nueva Version",
+  "directories": {
+    "buildResources": "build",
+    "output": "release"
+  },
+  "files": ["out/**"],
+  "linux": {
+    "target": ["AppImage", "deb"]
+  },
+  "mac": {
+    "target": ["dmg"]
+  },
+  "win": {
+    "target": ["nsis"]
+  }
+}
